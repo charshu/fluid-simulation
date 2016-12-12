@@ -23,6 +23,7 @@
     <script src="js/three.min.js"></script>
     <script src="js/OrbitControls.js"></script>
     <script src="js/Detector.js"></script>
+    <script src="js/OpenBoxBufferGeometry.js"></script>
     <script src="libs/stats.min.js"></script>
     <script>
         if (!Detector.webgl) Detector.addGetWebGLMessage();
@@ -53,17 +54,27 @@
             controls.enableZoom = true;
 
 
-
-            var geometry = new THREE.PlaneGeometry(5, 5, 2);
+            //water plane
+            var geometry = new THREE.PlaneGeometry(5, 5, 2,2);
             var material = new THREE.MeshBasicMaterial({
-                color: 0xffff00,
+                color: 0x6699ff,
                 side: THREE.DoubleSide
             });
             var plane = new THREE.Mesh(geometry, material);
-            //  plane.rotation.x = 90;
-
+            plane.rotation.x = Math.PI / 2;
+            
             scene.add(plane);
 
+            //water cube
+            var cubeGeometry = new THREE.OpenBoxBufferGeometry(5,5,5);
+            var cubeMaterial = new THREE.MeshBasicMaterial({
+                color: 0xebebfa
+            });
+            cubeMaterial.transparent = true;
+
+            var cubeMesh = new THREE.Mesh(cubeGeometry, cubeMaterial);
+            cubeMesh.position.y = - 2.5;
+            this.scene.add(cubeMesh);
 
             stats = new Stats();
             container.appendChild(stats.dom);
