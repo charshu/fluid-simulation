@@ -25,77 +25,680 @@
     <script src="js/Detector.js"></script>
     <script src="js/OpenBoxBufferGeometry.js"></script>
     <script src="libs/stats.min.js"></script>
+
+    <script type="text/javascript">
+    var waterWidth = 128; // for waterShader
+    var shadowColor = 'vec3(0.34, 0.43, 0.5)';
+    var waterColor = 'vec3(0.86, 0.96, 0.99)';
+    var underWaterDim = 0.6;
+    </script>
+
+    <script type="x-shader/x-vertex" id="waterVertexShader">
+    uniform sampler2D u_WaterInfoTexture;
+    varying vec3 v_WorldPos;
+    varying vec2 v_Uv;
+
+    void main() {
+      vec4 info = texture2D(u_WaterInfoTexture, uv);
+      // switch to xz plane
+      vec4 worldPos = modelMatrix * vec4(position + vec3(0.0, 0.0, info.r), 1.0);
+      gl_Position = projectionMatrix * viewMatrix * worldPos;
+      v_WorldPos = worldPos.xyz;
+      v_Uv = uv;
+      }
+    </script>
+    <script type="x-shader/x-vertex" id="waterFragmentShader">
+    precision mediump float;
+    const float IOR_AIR = 1.0;
+    const float IOR_WATER = 1.33;
+    const float WATER_WIDTH =  128.0;
+    const vec3 SHADOW_COLOR = vec3(0.34, 0.43, 0.5);
+    const vec3 WATER_COLOR = vec3(0.86, 0.96, 0.99);
+
+    uniform sampler2D u_WaterInfoTexture;
+    uniform sampler2D u_CausticTex;
+    uniform sampler2D u_TileTexture;
+    uniform samplerCube u_SkyTexture;
+    uniform vec3 u_LightDir;
+    uniform float u_PoolHeight;
+
+    varying vec3 v_WorldPos;
+    varying vec2 v_Uv;
+
+    vec2 getUv(vec2 pos, float maxWidth, float maxHeight){
+      vec2 newPos;
+      newPos.x = (pos.x + maxWidth / 2.0) / maxWidth;
+      newPos.y = (pos.y + maxHeight / 2.0) / maxHeight;
+      return newPos;
+    }
+
+    vec2 intersectCube(vec3 origin, vec3 ray, vec3 cubeMin, vec3 cubeMax) {
+      vec3 t1 = (cubeMin - origin) / ray;
+      vec3 t2 = (cubeMax - origin) / ray;
+
+      vec3 ta = min(t1, t2);
+      vec3 tb = max(t1, t2);
+
+      float tminxy = max(ta.x, ta.y);
+      float tmaxxy = min(tb.x, tb.y);
+
+      float tmin = max(tminxy, ta.z);
+      float tmax = min(tmaxxy, tb.z);
+
+      return vec2(tmin, tmax);
+    }
+
+    vec3 getWallColor(vec3 worldPos, vec3 ray, vec3 lightDir){
+      vec3 color;
+      vec3 faceNormal;
+      //
+      vec2 t = intersectCube(worldPos, ray, vec3(-WATER_WIDTH / 2.0, -u_PoolHeight, -WATER_WIDTH / 2.0), vec3(WATER_WIDTH / 2.0, 0.0, WATER_WIDTH / 2.0));
+      vec3 hit = worldPos + t.y * ray;
+      //
+      if (WATER_WIDTH / 2.0 - abs(hit.x) <= 0.1){
+        color = (texture2D(u_TileTexture, getUv(hit.yz, WATER_WIDTH, WATER_WIDTH))).xyz;
+        faceNormal = vec3(1.0, 0.0, 0.0);
+      } else if(WATER_WIDTH / 2.0 - abs(hit.z) <= 0.1){
+        color = (texture2D(u_TileTexture, getUv(hit.xy, WATER_WIDTH, WATER_WIDTH))).xyz;
+        faceNormal = vec3(0.0, 0.0, 1.0);
+      } else if(hit.y <= -u_PoolHeight + 0.1){
+        color = (texture2D(u_TileTexture, getUv(hit.xz, WATER_WIDTH, WATER_WIDTH))).xyz;
+        faceNormal = vec3(0.0, 1.0, 0.0);
+      } else { // fallback
+        color = vec3(1.0);
+        faceNormal = vec3(0.0, 1.0, 0.0);
+      }
+      //
+      float diffuse = dot(faceNormal, u_LightDir);
+      diffuse = 0.3 * ((diffuse >= 0.0)? 1.0 : 0.0) * diffuse + 0.7;
+      //
+      // shadow
+      vec2 t2 = intersectCube(hit, -u_LightDir, vec3(-WATER_WIDTH / 2.0, -u_PoolHeight, -WATER_WIDTH / 2.0), vec3(WATER_WIDTH / 2.0, 0.0, WATER_WIDTH / 2.0));
+      vec3 inverseHit = hit - t2.y * u_LightDir;
+      vec3 lit = (inverseHit.y < 0.0) ? SHADOW_COLOR: vec3(1.0, 1.0, 1.0);
+      //
+      // caustics
+      vec2 causticsUv = getUv((hit.xz - hit.y * lightDir.xz / lightDir.y), WATER_WIDTH, WATER_WIDTH);
+      causticsUv.y = 1.0 - causticsUv.y;
+      float caustics = texture2D(u_CausticTex, causticsUv).r;
+      float litCaustics = pow(lit.x, 2.0);
+      //
+      color *= diffuse * WATER_COLOR * (lit * 0.8 + litCaustics * caustics * 0.8);
+      return color;
+    }
+
+    void main() {
+      //
+      vec4 info = texture2D(u_WaterInfoTexture, v_Uv);
+      vec2 myUv = v_Uv;
+      //
+      /* make water look more "peaked" */
+      for (int i = 0; i < 10; i++) {
+        myUv += info.ba * 0.005;
+        info = texture2D(u_WaterInfoTexture, myUv);
+      }
+      //
+      vec3 eyeRay = normalize(v_WorldPos - cameraPosition);
+      vec3 worldNormal = vec3(info.b, sqrt(1.0 - dot(info.ba, info.ba)), info.a);
+      //
+      float fresnel = mix(0.25, 1.0, pow(1.0 + dot(worldNormal, eyeRay), 3.0));
+      //
+      vec3 reflectRay = reflect(eyeRay, worldNormal);
+      vec3 refractRay = refract(eyeRay, worldNormal, IOR_AIR/ IOR_WATER);
+      //
+      vec3 refractLight = refract(u_LightDir, worldNormal, IOR_AIR / IOR_WATER);
+      //
+      // refract causticTex + tileTexture
+      vec3 refractColor = getWallColor(v_WorldPos, refractRay, refractLight);
+      // reflect textureCube
+      vec3 reflectColor = (reflectRay.y >= 0.0) ? textureCube(u_SkyTexture, vec3(-reflectRay.x, reflectRay.yz)).rgb : getWallColor(v_WorldPos, reflectRay, refractLight);
+      //
+      gl_FragColor = vec4(mix(refractColor, reflectColor, fresnel), 1.0);
+    }
+    </script>
+    <script type="x-shader/x-vertex" id="waterInfoVertexShader">
+    varying vec2 v_Uv;
+      void main() {
+      v_Uv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+    </script>
+    <script type="x-shader/x-vertex" id="waterInfoFragmentDropShader">
+    const float PI = 3.141592653589793;
+    uniform sampler2D u_Texture;
+    uniform vec2 u_Center;
+    uniform float u_Radius;
+    uniform float u_Strength;
+    varying vec2 v_Uv;
+    void main() {
+      vec4 info = texture2D(u_Texture, v_Uv);
+      float drop = max(0.0, 1.0 - length(u_Center - v_Uv) / u_Radius);
+      drop = 0.5 - cos(drop * PI) * 0.5;
+      info.r += drop * u_Strength;
+      gl_FragColor = info;
+    }
+    </script>
+    <script type="x-shader/x-vertex" id="waterInfoFragmentStepShader">
+    uniform sampler2D u_Texture;
+    uniform vec2 u_Delta;
+    varying vec2 v_Uv;
+    void main() {
+      vec4 info = texture2D(u_Texture, v_Uv);
+      vec2 dx = vec2(u_Delta.x, 0.0);
+      vec2 dy = vec2(0.0, u_Delta.y);
+      float average = (texture2D(u_Texture, v_Uv - dx).r + texture2D(u_Texture, v_Uv - dy).r + texture2D(u_Texture, v_Uv + dx).r + texture2D(u_Texture, v_Uv + dy).r) * 0.25;
+      info.g += (average - info.r) * 2.0;
+      info.g *= 0.995;
+      info.r += info.g;
+      gl_FragColor = info;
+    }
+    </script>
+    <script type="x-shader/x-vertex" id="waterInfoFragmentNormalShader">
+    uniform sampler2D u_Texture;
+    uniform vec2 u_Delta;
+    varying vec2 v_Uv;
+    void main() {
+      vec4 info = texture2D(u_Texture, v_Uv);
+      vec3 dx = vec3(u_Delta.x, texture2D(u_Texture, vec2(v_Uv.x + u_Delta.x, v_Uv.y)).r - info.r, 0.0);
+      vec3 dy = vec3(0.0, texture2D(u_Texture, vec2(v_Uv.x, v_Uv.y + u_Delta.y)).r - info.r, u_Delta.y);
+      info.ba = normalize(cross(dy, dx)).xz;
+      gl_FragColor = info;
+    }
+    </script>
+    <script type="x-shader/x-vertex" id="causticsInfoVertexShader">
+    precision mediump float;
+
+    vec2 intersectCube(vec3 origin, vec3 ray, vec3 cubeMin, vec3 cubeMax) {
+      vec3 t1 = (cubeMin - origin) / ray;
+      vec3 t2 = (cubeMax - origin) / ray;
+
+      vec3 ta = min(t1, t2);
+      vec3 tb = max(t1, t2);
+
+      float tminxy = max(ta.x, ta.y);
+      float tmaxxy = min(tb.x, tb.y);
+
+      float tmin = max(tminxy, ta.z);
+      float tmax = min(tmaxxy, tb.z);
+
+      return vec2(tmin, tmax);
+    }
+
+    const float IOR_AIR = 1.0;
+    const float IOR_WATER = 1.333;
+    const float WATER_WIDTH =  128.0 ;
+    //
+    uniform vec3 u_LightDir;
+    uniform sampler2D u_WaterInfoTexture;
+    uniform float u_PoolHeight;
+    //
+    varying vec3 v_OldPos;
+    varying vec3 v_NewPos;
+    //
+    vec3 getHitPosition(vec3 origin, vec3 ray){
+      vec2 t = intersectCube(origin, ray, vec3(-WATER_WIDTH / 2.0, -u_PoolHeight, -WATER_WIDTH / 2.0), vec3(WATER_WIDTH / 2.0, 0.0, WATER_WIDTH / 2.0));
+      return origin + ray * t.y;
+    }
+    //
+    vec3 project(vec3 pos, vec3 light){
+      vec2 delta = (-u_PoolHeight - pos.y) / light.y * light.xz;
+      pos.xz += delta;
+      pos.y = 0.0;
+      return pos;
+    }
+    //
+    void main() {
+      vec4 info = texture2D(u_WaterInfoTexture, uv);
+      vec3 waveNormal = vec3(info.b, sqrt(1.0 - dot(info.ba, info.ba)), info.a);
+      //
+      vec3 refractLight0 = refract(u_LightDir, vec3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
+      vec3 refractLight1 = refract(u_LightDir, waveNormal, IOR_AIR / IOR_WATER);
+      //
+      // world coord
+      vec3 worldPos = vec3(position.x, 0.0, position.y);
+      vec3 hit0 = getHitPosition(worldPos, refractLight0);
+      vec3 hit1 = getHitPosition(worldPos + vec3(0.0, info.r, 0.0), refractLight1);
+      //
+      // project to xz plane
+      v_OldPos = project(hit0, refractLight0);
+      v_NewPos = project(hit1, refractLight1);
+
+      gl_Position =  projectionMatrix * modelViewMatrix * vec4((v_NewPos.xz + refractLight0.xz / refractLight0.y), 0.0, 1.0);
+    }
+    </script>
+    <script type="x-shader/x-vertex" id="causticsInfoFragmentShader">
+    precision mediump float;
+
+    uniform vec3 u_LightDir;
+    uniform float u_PoolHeight;
+
+    varying vec3 v_OldPos;
+    varying vec3 v_NewPos;
+    void main() {
+      float oldArea = length(dFdx(v_OldPos)) * length(dFdy(v_OldPos));
+      float newArea = length(dFdx(v_NewPos)) * length(dFdy(v_NewPos));
+      // make sure that only lit areas in the texture > 0.0
+      float r = clamp((oldArea - newArea) / oldArea, 0.0, 1.0);
+      gl_FragColor = vec4(r, 0.0, 0.0, 1.0);
+    }
+    </script>
+
+    <script type="text/javascript">
+
+    function ShaderPass(shader, w, h){
+
+      this.bufferScene = new THREE.Scene();
+
+      this.bufferMaterial = new THREE.ShaderMaterial(shader);
+
+      this.bufferScene.add(new THREE.Mesh( new THREE.PlaneGeometry( w, h, w, h), this.bufferMaterial )); // causticsShader needs vertex positions(segments)
+
+    }
+
+    ShaderPass.prototype.render = function(renderer, camera, tIn, tOut, texUniformName){
+
+      this.updateUniform(texUniformName, tIn.texture);
+
+      renderer.render(this.bufferScene, camera, tOut, true);
+
+    };
+
+    ShaderPass.prototype.regularRender = function(renderer, camera, tOut){
+
+      renderer.render(this.bufferScene, camera, tOut, true);
+
+    };
+
+    ShaderPass.prototype.updateUniform = function(name, value){
+
+      this.bufferMaterial.uniforms[name].value = value;
+
+    };
+
+    function WaterInfo(params){
+
+      this.renderer = params.renderer;
+
+      // texture dimension
+
+      var w = params.w;
+      var h = params.h;
+
+      this.debug = params.debug;
+
+      var targetOptions = {
+
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter,
+        type: THREE.FloatType,
+        stencilBuffer: false,
+        depthBuffer: false
+
+      };
+
+      this.targetIn = new THREE.WebGLRenderTarget( w, h, targetOptions);
+      this.targetOut = new THREE.WebGLRenderTarget( w, h, targetOptions);
+
+      // debug, display the texture
+
+      if (this.debug === true){
+
+        this.scene = new THREE.Scene();
+
+        this.finalMaterial =  new THREE.MeshBasicMaterial({map: null});
+
+        this.quad = new THREE.Mesh( new THREE.PlaneBufferGeometry( w, h, 1, 1), this.finalMaterial );
+
+        this.scene.add(this.quad);
+
+      }
+      this.camera = new THREE.OrthographicCamera( w / - 2, w / 2, h / 2, h / - 2, 0, 1 );
+      this.delta = new THREE.Vector2(1 / w, 1 / h);
+
+
+      // buffer scene
+
+      var dropShader = {
+        uniforms: {
+
+          'u_Texture': {type: 't', value: null},
+          'u_Center': {type: 'v2', value: new THREE.Vector2(0, 0)},
+          'u_Radius': {type: 'f', value: 0.0},
+          'u_Strength': {type: 'f', value: 0.0}
+        },
+        vertexShader: document.getElementById('waterInfoVertexShader').textContent,
+        fragmentShader: document.getElementById('waterInfoFragmentDropShader').textContent
+      };
+
+      var stepShader = {
+        uniforms: {
+          'u_Texture': {type: 't', value: null},
+          'u_Delta': {type: 'v2', value: this.delta}
+        },
+
+        vertexShader: document.getElementById('waterInfoVertexShader').textContent,
+        fragmentShader: document.getElementById('waterInfoFragmentStepShader').textContent
+
+      };
+
+      var normalShader = {
+
+        uniforms: {
+
+          'u_Texture': {type: 't', value: null},
+          'u_Delta': {type: 'v2', value: this.delta}
+        },
+        vertexShader: document.getElementById('waterInfoVertexShader').textContent,
+        fragmentShader: document.getElementById('waterInfoFragmentNormalShader').textContent
+
+      };
+
+      this.pDrop = new ShaderPass(dropShader, w, h);
+      this.pStep = new ShaderPass(stepShader, w, h);
+      this.pNormal = new ShaderPass(normalShader, w, h);
+
+    }
+
+    WaterInfo.prototype.render1 = function(){ // render once
+
+      this.swapTargets();
+
+      this.pStep.render(this.renderer, this.camera, this.targetIn, this.targetOut, 'u_Texture');
+
+      this.swapTargets();
+
+      this.pNormal.render(this.renderer, this.camera, this.targetIn, this.targetOut, 'u_Texture');
+
+      if (this.debug === true){
+
+        this.quad.material.map = this.targetOut.texture;
+        this.renderer.render( this.scene, this.camera );
+
+      }
+
+      // output the texture ...
+      return this.targetOut.texture;
+
+    };
+
+    WaterInfo.prototype.swapTargets = function(){
+
+      var t = this.targetIn;
+      this.targetIn = this.targetOut;
+      this.targetOut = t;
+
+    };
+
+    WaterInfo.prototype.addDrop = function(dropCenter, dropRadius, dropStrength){
+
+      this.pDrop.updateUniform('u_Center', dropCenter);
+      this.pDrop.updateUniform('u_Radius', dropRadius);
+      this.pDrop.updateUniform('u_Strength', dropStrength);
+
+      this.pDrop.render(this.renderer, this.camera, this.targetIn, this.targetOut, 'u_Texture');
+
+      this.swapTargets();
+
+    };
+
+
+    function CausticsInfo(params){
+
+      this.renderer = params.renderer;
+
+      // texture dimension
+
+      var w = params.w;
+      var h = params.h;
+
+      this.debug = params.debug;
+
+      var targetOptions = {
+
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter,
+        type: THREE.FloatType,
+        stencilBuffer: false,
+        depthBuffer: false
+
+      };
+
+      this.targetOut = new THREE.WebGLRenderTarget( w, h, targetOptions);
+
+      // debug, display the texture
+
+      if (this.debug === true){
+
+        this.scene = new THREE.Scene();
+
+        this.finalMaterial =  new THREE.MeshBasicMaterial({map: null});
+
+        this.quad = new THREE.Mesh( new THREE.PlaneBufferGeometry( w, h, 1, 1), this.finalMaterial );
+
+        this.scene.add(this.quad);
+
+      }
+
+
+      this.camera = new THREE.OrthographicCamera( w / - 2, w / 2, h / 2, h / - 2, 0, 1 );
+
+
+      // buffer scene
+      var causticsShader = {
+
+        uniforms: {
+          'u_LightDir': {type: 'v3', value: null},
+          'u_CausticTex': {type: 't', value: null},
+          'u_WaterInfoTexture': {type: 't', value: null},
+          'u_PoolHeight': {type: 'f', value: 0.0}
+        },
+        vertexShader: document.getElementById('causticsInfoVertexShader').textContent,
+        fragmentShader: document.getElementById('causticsInfoFragmentShader').textContent
+
+      };
+
+      this.pCaustics = new ShaderPass(causticsShader, w, h);
+      this.pCaustics.bufferMaterial.extensions.derivatives = true
+
+    }
+
+    CausticsInfo.prototype.render1 = function(waterInfoTexture){ // render once
+
+      this.pCaustics.updateUniform('u_WaterInfoTexture', waterInfoTexture);
+
+      this.pCaustics.regularRender(this.renderer, this.camera, this.targetOut);
+
+      if (this.debug === true){
+
+        this.quad.material.map = this.targetOut.texture;
+        this.renderer.render( this.scene, this.camera );
+
+      }
+
+      // output the texture ...
+      return this.targetOut.texture;
+
+    };
+
+
+    </script>
+
+    <!-- main -->
     <script>
         if (!Detector.webgl) Detector.addGetWebGLMessage();
 
-        var boxSize = 50;
+        var canvasWidth = 800;
+        var canvasHeight = 450;
+
+        var waterInfoWidth = waterWidth; // defined in shaders.js
+        var waterInfoHeight = waterInfoWidth;
+
+        var causticsInfoWidth = 4 * waterInfoWidth;
+        var causticsInfoHeight = causticsInfoWidth;
+
+        var waterHeight = waterWidth;
+        var poolHeight = 60;
+
+        var boxSize = 100;
         var stats;
         var camera, controls, scene, renderer;
-        var planeMesh;
-        var helper;
+        var waterMeshes;
+        var raycastHelper;
         var raycaster = new THREE.Raycaster();
 			  var mouse = new THREE.Vector2();
 
+        var waterMaterials;
+        var waterInfo;
+
+        var waterShaders = {};
+        var causticsShader = {};
+        var cubeShader = {};
         init();
         animate();
 
         function init() {
-            scene = new THREE.Scene();
 
-            //set render in container
+
             renderer = new THREE.WebGLRenderer();
-            //renderer.setClearColor( scene.fog.color );
-            renderer.setPixelRatio(window.devicePixelRatio);
-            renderer.setSize(window.innerWidth, window.innerHeight);
+
+            renderer.setClearColor( 0x000000, 1);
+            renderer.setSize(canvasWidth, canvasHeight);
+            renderer.antialias = true;
+            renderer.autoClear = false;
 
             var container = document.getElementById('container');
             container.appendChild(renderer.domElement);
 
-            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.z = 50;
-            camera.position.y = 50;
+
+            scene = new THREE.Scene();
+            scene.matrixAutoUpdate = false;
+
+            camera = new THREE.PerspectiveCamera( 45, canvasWidth / canvasHeight, 1, 100000 );
+
+            camera.position.z = 280;
+            camera.position.y = 100;
 
             controls = new THREE.OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
             controls.dampingFactor = 0.25;
             controls.enableZoom = true;
 
+            // waterInfo texture
+            waterInfo = new WaterInfo({
+
+              renderer: renderer,
+              w: waterInfoWidth,
+              h: waterInfoHeight,
+              debug: false
+
+            });
+
+            // caustics texture
+            causticsInfo = new CausticsInfo({
+
+              renderer: renderer,
+              w: causticsInfoWidth,
+              h: causticsInfoHeight,
+              debug: false
+
+            });
+
+          
+            if (waterInfo.debug === true || causticsInfo.debug === true){
+
+              renderer.setSize(waterWidth * 2, waterWidth * 2);
+
+            }
+
+            // skyTexture
+            var path = "img/skybox/";
+            var format = '.jpg';
+            var urls = [
+
+                path + 'posx' + format, path + 'negx' + format,
+                path + 'posy' + format, path + 'negy' + format,
+                path + 'posz' + format, path + 'negz' + format
+
+            ];
+            var skyTexture = new THREE.CubeTextureLoader().load( urls );
+            skyTexture.format = THREE.RGBFormat;
+
+            // tileTexture
+            var tileTexture = new THREE.TextureLoader().load('img/tile.jpg');
+            tileTexture.format = THREE.RGBFormat;
+
+            console.log(tileTexture);
+            // water surface
+            var waterShaders = {
+              uniforms:{
+                'u_TileTexture': {type: 't', value: tileTexture},
+                'u_SkyTexture': {type: 't', value: skyTexture},
+                'u_WaterInfoTexture': {type: 't', value: null},
+                'u_CausticTex': {type: 't', value: null},
+                'u_LightDir': {type: 't', value: null},
+                'u_PoolHeight': {type: 't', value: null}
+              },
+              vertexShader: document.getElementById('waterVertexShader').textContent,
+              fragmentShader: document.getElementById('waterFragmentShader').textContent
+            }
+
+            waterMaterials = new THREE.ShaderMaterial(waterShaders);
+            this.waterMaterials.side = THREE.FrontSide;
 
             //water surface
-            var geometry = new THREE.PlaneBufferGeometry(boxSize, boxSize, 2,2);
-            var material = new THREE.MeshBasicMaterial({
-                color: 0x6699ff
-            });
 
-            planeMesh = new THREE.Mesh(geometry, material);
-            planeMesh.rotation.x = - Math.PI / 2;
+            var waterPlane = new THREE.PlaneGeometry(waterWidth, waterHeight, 1,1);
+            waterMeshes = new THREE.Mesh(waterPlane, waterMaterials);
+            waterMeshes.rotation.x = 3 / 2 * Math.PI; // front to top, back to bottom
+            scene.add(waterMeshes);
 
-            scene.add(planeMesh);
+
 
             //water cube
-            var cubeGeometry = new THREE.OpenBoxBufferGeometry(boxSize,boxSize,boxSize);
-            var cubeMaterial = new THREE.MeshBasicMaterial({
-                color: 0xebebfa
-            });
-            cubeMaterial.transparent = true;
+            // this.cubeMaterial = new THREE.ShaderMaterial({
+            //     'u_TileTexture': {type: 't', value: tileTexture},
+            //     'u_WaterInfoTexture': {type: 't', value: null},
+            //     'u_CausticTex': {type: 't', value: null},
+            //     'u_LightDir': {type: 't', value: null},
+            //     'u_PoolHeight': {type: 't', value: null}
+            // });
+            // this.cubeMaterial.transparent = true;
+            //
+            // var cubeMesh = new THREE.Mesh(new THREE.OpenBoxBufferGeometry(waterWidth,1,waterHeight), this.cubeMaterial);
+            // cubeMesh.position.y = - 0.5;
+            //
+            // this.scene.add(cubeMesh);
 
-            var cubeMesh = new THREE.Mesh(cubeGeometry, cubeMaterial);
-            cubeMesh.position.y = - boxSize/2.0;
-            this.scene.add(cubeMesh);
+
+            // raycaster
+
+            container.addEventListener('click', this.onMouseClick.bind(this), false);
 
 
-            //raycastHelper
-            cylinderHeight = 5;
-            var geometryCylinder = new THREE.CylinderGeometry( 0, 1, cylinderHeight, 4 );
-    				geometryCylinder.translate( 0, cylinderHeight/2.0 , 0 );
+            // raycast helper
 
-    				helper = new THREE.Mesh( geometryCylinder, new THREE.MeshNormalMaterial() );
-    				scene.add( helper );
+            var geometry = new THREE.CylinderGeometry( 0, 4, 6, 3 );
 
+            var raycasterOffsetY = 4;
+
+            raycastHelper = new THREE.Mesh( geometry, new THREE.MeshNormalMaterial());
+
+            raycastHelper.position.y += this.raycasterOffsetY;
+
+            scene.add( this.raycastHelper );
+
+            raycastHelper.visible = true;
+
+
+            // init drops
+
+            this.addRandomDrops();
+
+            //stats
             stats = new Stats();
             container.appendChild(stats.dom);
-            container.addEventListener( 'mousemove', onMouseMove, false );
-            window.addEventListener('resize', onWindowResize, false);
+
+
         }
 
         function onWindowResize() {
@@ -104,23 +707,56 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         }
 
-        function onMouseMove( event ) {
-				mouse.x = ( event.clientX / renderer.domElement.clientWidth ) * 2 - 1;
-				mouse.y = - ( event.clientY / renderer.domElement.clientHeight ) * 2 + 1;
-				raycaster.setFromCamera( mouse, camera );
-				// See if the ray from the camera into the world hits one of our meshes
-				var intersects = raycaster.intersectObject( planeMesh );
-				// Toggle rotation bool for meshes that we clicked
-				if ( intersects.length > 0 ) {
-          console.log(intersects[ 0 ].point );
-					helper.position.set( 0, 0, 0 );
-					helper.lookAt( intersects[ 0 ].face.normal );
-					helper.position.copy( intersects[ 0 ].point );
-				}
+        function onMouseClick( event ) {
+          var rect = document.getElementsByTagName("canvas")[0].getBoundingClientRect();
+
+          var canvasOffsetX = rect.left;
+          var canvasOffsetY = rect.top;
+
+          mouse.x = ((event.clientX - canvasOffsetX) / canvasWidth) * 2 - 1;
+          mouse.y = - ((event.clientY - canvasOffsetY) / canvasHeight) * 2 + 1;
+
+          raycaster.setFromCamera(mouse, camera);
+
+          var intersects0 = raycaster.intersectObject(waterMeshes);
+        //  var intersects1 = raycaster.intersectObject(waterMeshes[1]);
+
+          if (intersects0.length > 0) {
+
+            var point = intersects0[0].point; // world position
+
+            var aboveWater = true;
+
+          // } else if(intersects1.length > 0){
+          //
+          //   var point = intersects1[0].point;
+          //
+          //   var aboveWater = false;
+
+          } else { return; }
+
+          var center = new THREE.Vector2((point.x + waterWidth / 2) / waterWidth, (-point.z + waterHeight / 2) / waterHeight); // uv
+
+          for (var i = 0; i < 2; i++) {
+
+            addDrop(center, 0.1, (i & 1) ? - 0.2 : 0.2);
+
+          }
+
+
+
+            this.raycastHelper.position.copy(point);
+            this.raycastHelper.rotation.x = aboveWater ? 0 : Math.PI;
+            this.raycastHelper.position.y += (aboveWater ? 1 : -1) * this.raycasterOffsetY;
+
+
+
+
 			}
 
         function animate() {
             requestAnimationFrame(animate);
+            waterUpdate();
             controls.update(); // required if controls.enableDamping = true, or if controls.autoRotate = true
             stats.update();
             render();
@@ -130,6 +766,50 @@
             renderer.render(scene, camera);
         }
 
+        function waterUpdate(){
+          //  console.log('clear');
+            renderer.clear();
+
+            // waterInfoTexture
+
+            var waterInfoTexture = waterInfo.render1();
+
+
+            // causticTex
+
+            causticsInfo.pCaustics.updateUniform('u_LightDir', new THREE.Vector3(0, 0, 1));
+            causticsInfo.pCaustics.updateUniform('u_PoolHeight', 60.0);
+
+            var causticTex = causticsInfo.render1(waterInfoTexture);
+
+            waterMaterials.uniforms['u_WaterInfoTexture'].value = waterInfoTexture;
+            waterMaterials.uniforms['u_CausticTex'].value = causticTex;
+            waterMaterials.uniforms['u_LightDir'].value = new THREE.Vector3(0, 0, 1);
+            waterMaterials.uniforms['u_PoolHeight'].value = 60.0;
+
+        }
+
+        function addDrop(center, radius, strength){
+
+          waterInfo.addDrop(center, radius, strength);
+
+        }
+        function addRandomDrops(){
+
+          for (var i = 0; i < 10; i++) {
+
+            // params: center, radius in uv coord, strength [0, 1]
+
+            addDrop(new THREE.Vector2(getRandomArbitrary(0.0, 0.5), getRandomArbitrary(0.0, 0.5)), 0.1, (i & 1) ? - 0.1 : 0.1);
+
+          }
+        }
+
+        function getRandomArbitrary(min, max) {
+
+          return Math.random() * (max - min) + min;
+
+        }
 
 
     </script>
