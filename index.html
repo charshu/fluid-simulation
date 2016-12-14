@@ -24,7 +24,7 @@
     <script src="js/OrbitControls.js"></script>
     <script src="js/Detector.js"></script>
     <script src="js/OpenBoxBufferGeometry.js"></script>
-    <script src="libs/stats.min.js"></script>
+    <script src="js/stats.min.js"></script>
 
 
     <!-- NOTE: water shaders by evan wallace -->
@@ -268,9 +268,10 @@
         uniforms: {
 
           'texture': {type: 't', value: null},
+          'strength': {type: 'f', value: 0.0},
           'center': {type: 'v2', value: new THREE.Vector2(0, 0)},
-          'radius': {type: 'f', value: 0.0},
-          'strength': {type: 'f', value: 0.0}
+          'radius': {type: 'f', value: 0.0}
+
         },
         vertexShader: document.getElementById('waterSurfaceVertexShader').textContent,
         fragmentShader: document.getElementById('waterSurfaceFragmentDropShader').textContent
@@ -299,18 +300,18 @@
 
       };
 
-      this.pDrop = new ShaderPass(dropShader, w, h);
-      this.pStep = new ShaderPass(stepShader, w, h);
-      this.pNormal = new ShaderPass(normalShader, w, h);
+      this.dropPass = new ShaderPass(dropShader, w, h);
+      this.stepPass = new ShaderPass(stepShader, w, h);
+      this.normalPass = new ShaderPass(normalShader, w, h);
 
     }
 
-    waterSurface.prototype.seqRender = function(){ // render once
+    waterSurface.prototype.seqRender = function(){
 
       this.swapTargets();
-      this.pStep.render(this.renderer, this.camera, this.targetIn, this.targetOut, 'texture');
+      this.stepPass.render(this.renderer, this.camera, this.targetIn, this.targetOut, 'texture');
       this.swapTargets();
-      this.pNormal.render(this.renderer, this.camera, this.targetIn, this.targetOut, 'texture');
+      this.normalPass.render(this.renderer, this.camera, this.targetIn, this.targetOut, 'texture');
       return this.targetOut.texture;
 
     };
@@ -325,11 +326,11 @@
 
     waterSurface.prototype.addDrop = function(dropCenter, dropRadius, dropStrength){
 
-      this.pDrop.updateUniform('center', dropCenter);
-      this.pDrop.updateUniform('radius', dropRadius);
-      this.pDrop.updateUniform('strength', dropStrength);
+      this.dropPass.updateUniform('center', dropCenter);
+      this.dropPass.updateUniform('radius', dropRadius);
+      this.dropPass.updateUniform('strength', dropStrength);
 
-      this.pDrop.render(this.renderer, this.camera, this.targetIn, this.targetOut, 'texture');
+      this.dropPass.render(this.renderer, this.camera, this.targetIn, this.targetOut, 'texture');
       this.swapTargets();
 
     };
@@ -344,7 +345,7 @@
         var canvasWidth = 1280;
         var canvasHeight = 720;
 
-        var waterSurfaceWidth = waterWidth; // defined in shaders.js
+        var waterSurfaceWidth = waterWidth;
         var waterSurfaceHeight = waterSurfaceWidth;
 
         var waterHeight = waterWidth;
@@ -353,7 +354,7 @@
         var boxSize = 100;
         var stats;
         var camera, controls, scene, renderer;
-        var waterMeshes;
+        var waterSurfaceMesh;
         var raycastHelper;
         var light;
         var raycaster;
@@ -414,7 +415,7 @@
                 'sky': {type: 't', value: null},
                 'water': {type: 't', value: null},
                 'causticTex': {type: 't', value: null},
-                'light': {type: 't', value: null},
+                'light': {type: 't', value: new THREE.Vector3(5,5,5)},
                 'poolHeight': {type: 't', value: null}
               },
               vertexShader: document.getElementById('waterVertexShader').textContent,
@@ -427,9 +428,9 @@
             //water surface
 
             var waterPlane = new THREE.PlaneGeometry(waterWidth, waterHeight, 1,1);
-            waterMeshes = new THREE.Mesh(waterPlane, waterMaterials);
-            waterMeshes.rotation.x = 3 / 2 * Math.PI; // front to top, back to bottom
-            scene.add(waterMeshes);
+            waterSurfaceMesh = new THREE.Mesh(waterPlane, waterMaterials);
+            waterSurfaceMesh.rotation.x = 3 / 2 * Math.PI; // front to top, back to bottom
+            scene.add(waterSurfaceMesh);
 
             //cube
             var geometry = new THREE.BoxGeometry( waterWidth, poolHeight, waterHeight);
@@ -473,13 +474,12 @@
 
           var canvasOffsetX = rect.left;
           var canvasOffsetY = rect.top;
-
           mouse.x = ((event.clientX - canvasOffsetX) / canvasWidth) * 2 - 1;
           mouse.y = - ((event.clientY - canvasOffsetY) / canvasHeight) * 2 + 1;
 
           raycaster.setFromCamera(mouse, camera);
 
-          var intersects0 = raycaster.intersectObject(waterMeshes);
+          var intersects0 = raycaster.intersectObject(waterSurfaceMesh);
 
           if (intersects0.length > 0) {
             var point = intersects0[0].point;
@@ -521,7 +521,6 @@
             waterMaterials.uniforms['poolHeight'].value = poolHeight;
             waterMaterials.uniforms['water'].value = waterSurfaceTexture;
 
-            waterMaterials.uniforms['light'].value = new THREE.Vector3(5,5,5) //circle light around
 
         }
 
