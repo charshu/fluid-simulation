@@ -356,6 +356,9 @@
 
     // Input handling
     var RIPPLE_FREQUENCY = 100; // ms
+    var INPLACE_RIPPLE_COUNTER_MAX = 3;
+    var inplaceRippleCounter = 400 / RIPPLE_FREQUENCY;
+    var prevRipplePos;
     var dragTimerID = null;
     var isDragging;
     var intersects;
@@ -479,8 +482,8 @@
     }
 
     function onMouseDown(event) {
-        mouse.x = ((event.clientX) / window.innerWidth) * 2 - 1;
-        mouse.y = -((event.clientY) / window.innerHeight) * 2 + 1;
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
         raycaster.setFromCamera(mouse, camera);
 
@@ -489,7 +492,16 @@
         if(intersects.length > 0) {
             controls.enabled = false;
             isDragging = true;
-            dragTimerID = window.setInterval(sendRipple, RIPPLE_FREQUENCY);
+
+            intersectPoint = intersects[0].point;
+            raycastHelper.position.copy(intersectPoint);
+            raycastHelper.rotation.x = 0;
+            raycastHelper.position.y += raycasterOffsetY;
+
+            sendRipple();
+            if(!dragTimerID) {
+                dragTimerID = window.setInterval(sendRipple, RIPPLE_FREQUENCY);
+            }
         }
     }
 
@@ -499,7 +511,6 @@
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
             raycaster.setFromCamera(mouse, camera);
-
             intersects = raycaster.intersectObject(waterSurfaceMesh);
 
             if(intersects.length > 0) {
@@ -516,14 +527,24 @@
         controls.enabled = true;
         isDragging = false;
         window.clearInterval(dragTimerID);
+        dragTimerID = null;
     }
 
     function sendRipple() {
+        if(prevRipplePos && prevRipplePos.equals(intersectPoint) && inplaceRippleCounter >= 1) {
+            inplaceRippleCounter = inplaceRippleCounter - 1;
+            return;
+        }
+
+        prevRipplePos = intersectPoint;
+
         var center = new THREE.Vector2((intersectPoint.x + waterWidth / 2) / waterWidth, (-intersectPoint.z + waterHeight / 2) / waterHeight); // uv
 
         for(var i = 0; i < 2; i++) {
             addDrop(center, 0.1, (i & 1) ? -0.2 : 0.2);
         }
+
+        inplaceRippleCounter = INPLACE_RIPPLE_COUNTER_MAX;
     }
 
     function animate() {
