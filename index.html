@@ -458,8 +458,8 @@
         if (!Detector.webgl) Detector.addGetWebGLMessage();
 
         var waterWidth = 128;
-        var canvasWidth = 800;
-        var canvasHeight = 450;
+//        var canvasWidth = 800;
+//        var canvasHeight = 450;
 
         var waterSurfaceWidth = waterWidth; // defined in shaders.js
         var waterSurfaceHeight = waterSurfaceWidth;
@@ -492,7 +492,8 @@
             renderer = new THREE.WebGLRenderer();
 
             renderer.setClearColor( 0x000000, 1);
-            renderer.setSize(canvasWidth, canvasHeight);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+//            renderer.setSize(canvasWidth, canvasHeight);
             renderer.antialias = true;
             renderer.autoClear = false;
 
@@ -504,7 +505,7 @@
             scene.matrixAutoUpdate = false;
 
 
-            camera = new THREE.PerspectiveCamera( 45, canvasWidth / canvasHeight, 1, 100000 );
+            camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 1, 100000 );
 
             camera.position.z = 280;
             camera.position.y = 100;
@@ -602,7 +603,7 @@
             stats = new Stats();
             container.appendChild(stats.dom);
 
-
+            window.addEventListener('resize', onWindowResize, false);
         }
 
         function onWindowResize() {
@@ -613,13 +614,13 @@
 
         function onMouseClick( event ) {
 
-          var rect = document.getElementsByTagName("canvas")[0].getBoundingClientRect();
+//          var rect = document.getElementsByTagName("canvas")[0].getBoundingClientRect();
+//
+//          var canvasOffsetX = rect.left;
+//          var canvasOffsetY = rect.top;
 
-          var canvasOffsetX = rect.left;
-          var canvasOffsetY = rect.top;
-
-          mouse.x = ((event.clientX - canvasOffsetX) / canvasWidth) * 2 - 1;
-          mouse.y = - ((event.clientY - canvasOffsetY) / canvasHeight) * 2 + 1;
+          mouse.x = ((event.clientX) / window.innerWidth) * 2 - 1;
+          mouse.y = - ((event.clientY) / window.innerHeight) * 2 + 1;
 
           raycaster.setFromCamera(mouse, camera);
 
