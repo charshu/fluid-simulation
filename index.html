@@ -26,13 +26,6 @@
     <script src="js/OpenBoxBufferGeometry.js"></script>
     <script src="libs/stats.min.js"></script>
 
-    <script type="text/javascript">
-    var waterWidth = 128; // for waterShader
-    var shadowColor = 'vec3(0.34, 0.43, 0.5)';
-    var waterColor = 'vec3(0.86, 0.96, 0.99)';
-    var underWaterDim = 0.6;
-    </script>
-
     <script type="x-shader/x-vertex" id="waterVertexShader">
     uniform sampler2D u_WaterInfoTexture;
     varying vec3 v_WorldPos;
@@ -41,13 +34,13 @@
     void main() {
       vec4 info = texture2D(u_WaterInfoTexture, uv);
       // switch to xz plane
-      vec4 worldPos = modelMatrix * vec4(position + vec3(0.0, 0.0, info.r), 1.0);
+      vec4 worldPos = modelMatrix * vec4(position , 1.0);
       gl_Position = projectionMatrix * viewMatrix * worldPos;
       v_WorldPos = worldPos.xyz;
       v_Uv = uv;
       }
     </script>
-    <script type="x-shader/x-vertex" id="waterFragmentShader">
+    <script type="x-shader/x-fragment" id="waterFragmentShader">
     precision mediump float;
     const float IOR_AIR = 1.0;
     const float IOR_WATER = 1.33;
@@ -156,6 +149,8 @@
       gl_FragColor = vec4(mix(refractColor, reflectColor, fresnel), 1.0);
     }
     </script>
+
+
     <script type="x-shader/x-vertex" id="waterInfoVertexShader">
     varying vec2 v_Uv;
       void main() {
@@ -163,7 +158,7 @@
       gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
     }
     </script>
-    <script type="x-shader/x-vertex" id="waterInfoFragmentDropShader">
+    <script type="x-shader/x-fragment" id="waterInfoFragmentDropShader">
     const float PI = 3.141592653589793;
     uniform sampler2D u_Texture;
     uniform vec2 u_Center;
@@ -178,7 +173,7 @@
       gl_FragColor = info;
     }
     </script>
-    <script type="x-shader/x-vertex" id="waterInfoFragmentStepShader">
+    <script type="x-shader/x-fragment" id="waterInfoFragmentStepShader">
     uniform sampler2D u_Texture;
     uniform vec2 u_Delta;
     varying vec2 v_Uv;
@@ -193,7 +188,7 @@
       gl_FragColor = info;
     }
     </script>
-    <script type="x-shader/x-vertex" id="waterInfoFragmentNormalShader">
+    <script type="x-shader/x-fragment" id="waterInfoFragmentNormalShader">
     uniform sampler2D u_Texture;
     uniform vec2 u_Delta;
     varying vec2 v_Uv;
@@ -266,7 +261,7 @@
       gl_Position =  projectionMatrix * modelViewMatrix * vec4((v_NewPos.xz + refractLight0.xz / refractLight0.y), 0.0, 1.0);
     }
     </script>
-    <script type="x-shader/x-vertex" id="causticsInfoFragmentShader">
+    <script type="x-shader/x-fragment" id="causticsInfoFragmentShader">
     precision mediump float;
 
     uniform vec3 u_LightDir;
@@ -527,6 +522,7 @@
     <script>
         if (!Detector.webgl) Detector.addGetWebGLMessage();
 
+        var waterWidth = 128;
         var canvasWidth = 800;
         var canvasHeight = 450;
 
@@ -544,8 +540,9 @@
         var camera, controls, scene, renderer;
         var waterMeshes;
         var raycastHelper;
-        var raycaster = new THREE.Raycaster();
-			  var mouse = new THREE.Vector2();
+        var raycaster;
+        var raycasterOffsetY;
+			  var mouse;
 
         var waterMaterials;
         var waterInfo;
@@ -553,6 +550,8 @@
         var waterShaders = {};
         var causticsShader = {};
         var cubeShader = {};
+
+
         init();
         animate();
 
@@ -572,6 +571,7 @@
 
             scene = new THREE.Scene();
             scene.matrixAutoUpdate = false;
+
 
             camera = new THREE.PerspectiveCamera( 45, canvasWidth / canvasHeight, 1, 100000 );
 
@@ -603,7 +603,7 @@
 
             });
 
-          
+
             if (waterInfo.debug === true || causticsInfo.debug === true){
 
               renderer.setSize(waterWidth * 2, waterWidth * 2);
@@ -627,7 +627,7 @@
             var tileTexture = new THREE.TextureLoader().load('img/tile.jpg');
             tileTexture.format = THREE.RGBFormat;
 
-            console.log(tileTexture);
+
             // water surface
             var waterShaders = {
               uniforms:{
@@ -671,21 +671,22 @@
 
 
             // raycaster
-
-            container.addEventListener('click', this.onMouseClick.bind(this), false);
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+            container.addEventListener('click', onMouseClick, false);
 
 
             // raycast helper
 
             var geometry = new THREE.CylinderGeometry( 0, 4, 6, 3 );
 
-            var raycasterOffsetY = 4;
+            raycasterOffsetY = 4;
 
             raycastHelper = new THREE.Mesh( geometry, new THREE.MeshNormalMaterial());
 
-            raycastHelper.position.y += this.raycasterOffsetY;
+            raycastHelper.position.y += raycasterOffsetY;
 
-            scene.add( this.raycastHelper );
+            scene.add( raycastHelper );
 
             raycastHelper.visible = true;
 
@@ -708,6 +709,7 @@
         }
 
         function onMouseClick( event ) {
+
           var rect = document.getElementsByTagName("canvas")[0].getBoundingClientRect();
 
           var canvasOffsetX = rect.left;
@@ -725,7 +727,7 @@
 
             var point = intersects0[0].point; // world position
 
-            var aboveWater = true;
+
 
           // } else if(intersects1.length > 0){
           //
@@ -745,9 +747,9 @@
 
 
 
-            this.raycastHelper.position.copy(point);
-            this.raycastHelper.rotation.x = aboveWater ? 0 : Math.PI;
-            this.raycastHelper.position.y += (aboveWater ? 1 : -1) * this.raycasterOffsetY;
+            raycastHelper.position.copy(point);
+            raycastHelper.rotation.x = 0
+            raycastHelper.position.y += raycasterOffsetY;
 
 
 
@@ -766,6 +768,7 @@
             renderer.render(scene, camera);
         }
 
+        var x = 0.0;
         function waterUpdate(){
           //  console.log('clear');
             renderer.clear();
@@ -776,15 +779,15 @@
 
 
             // causticTex
-
-            causticsInfo.pCaustics.updateUniform('u_LightDir', new THREE.Vector3(0, 0, 1));
+            x+= 0.01
+            causticsInfo.pCaustics.updateUniform('u_LightDir', new THREE.Vector3(Math.sin(x), 0, Math.cos(x)));
             causticsInfo.pCaustics.updateUniform('u_PoolHeight', 60.0);
-
+            //console.log(Math.sin(x) + " "+ Math.cos(x));
             var causticTex = causticsInfo.render1(waterInfoTexture);
 
             waterMaterials.uniforms['u_WaterInfoTexture'].value = waterInfoTexture;
             waterMaterials.uniforms['u_CausticTex'].value = causticTex;
-            waterMaterials.uniforms['u_LightDir'].value = new THREE.Vector3(0, 0, 1);
+            waterMaterials.uniforms['u_LightDir'].value = new THREE.Vector3(Math.sin(x), 0, Math.cos(x));
             waterMaterials.uniforms['u_PoolHeight'].value = 60.0;
 
         }
