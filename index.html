@@ -488,11 +488,8 @@
 
           var center = new THREE.Vector2((point.x + waterWidth / 2) / waterWidth, (-point.z + waterHeight / 2) / waterHeight); // uv
 
-          for (var i = 0; i < 2; i++) {
-
-            addDrop(center, 0.1, (i & 1) ? - 0.2 : 0.2);
-
-          }
+            addDrop(center, 0.1, 0.2);
+            addDrop(center, 0.1, -0.2);
             raycastHelper.position.copy(point);
             raycastHelper.rotation.x = 0
             raycastHelper.position.y += raycasterOffsetY;
