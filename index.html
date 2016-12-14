@@ -27,17 +27,17 @@
     <script src="libs/stats.min.js"></script>
 
     <script type="x-shader/x-vertex" id="waterVertexShader">
-    uniform sampler2D u_WaterInfoTexture;
+    uniform sampler2D water;
     varying vec3 v_WorldPos;
-    varying vec2 v_Uv;
+    varying vec2 coord;
 
     void main() {
-      vec4 info = texture2D(u_WaterInfoTexture, uv);
+      vec4 info = texture2D(water, uv);
       // switch to xz plane
-      vec4 worldPos = modelMatrix * vec4(position , 1.0);
+      vec4 worldPos = modelMatrix * vec4(position + vec3(0.0,info.r, 0.0) , 1.0);
       gl_Position = projectionMatrix * viewMatrix * worldPos;
       v_WorldPos = worldPos.xyz;
-      v_Uv = uv;
+      coord = uv;
       }
     </script>
     <script type="x-shader/x-fragment" id="waterFragmentShader">
@@ -48,7 +48,7 @@
     const vec3 SHADOW_COLOR = vec3(0.34, 0.43, 0.5);
     const vec3 WATER_COLOR = vec3(0.86, 0.96, 0.99);
 
-    uniform sampler2D u_WaterInfoTexture;
+    uniform sampler2D water;
     uniform sampler2D u_CausticTex;
     uniform sampler2D u_TileTexture;
     uniform samplerCube u_SkyTexture;
@@ -56,7 +56,7 @@
     uniform float u_PoolHeight;
 
     varying vec3 v_WorldPos;
-    varying vec2 v_Uv;
+    varying vec2 coord;
 
     vec2 getUv(vec2 pos, float maxWidth, float maxHeight){
       vec2 newPos;
@@ -122,13 +122,13 @@
 
     void main() {
       //
-      vec4 info = texture2D(u_WaterInfoTexture, v_Uv);
-      vec2 myUv = v_Uv;
+      vec4 info = texture2D(water, coord);
+      vec2 myUv = coord;
       //
       /* make water look more "peaked" */
       for (int i = 0; i < 10; i++) {
         myUv += info.ba * 0.005;
-        info = texture2D(u_WaterInfoTexture, myUv);
+        info = texture2D(water, myUv);
       }
       //
       vec3 eyeRay = normalize(v_WorldPos - cameraPosition);
@@ -151,51 +151,66 @@
     </script>
 
 
-    <script type="x-shader/x-vertex" id="waterInfoVertexShader">
-    varying vec2 v_Uv;
+    <script type="x-shader/x-vertex" id="waterSurfaceVertexShader">
+    varying vec2 coord;
       void main() {
-      v_Uv = uv;
+      coord = uv;
       gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
     }
     </script>
-    <script type="x-shader/x-fragment" id="waterInfoFragmentDropShader">
+    <script type="x-shader/x-fragment" id="waterSurfaceFragmentDropShader">
     const float PI = 3.141592653589793;
-    uniform sampler2D u_Texture;
+    uniform sampler2D texture;
     uniform vec2 u_Center;
     uniform float u_Radius;
     uniform float u_Strength;
-    varying vec2 v_Uv;
+    varying vec2 coord;
     void main() {
-      vec4 info = texture2D(u_Texture, v_Uv);
-      float drop = max(0.0, 1.0 - length(u_Center - v_Uv) / u_Radius);
+      /* get vertex info */
+      vec4 info = texture2D(texture, coord);
+      /* add the drop to the height */
+      float drop = max(0.0, 1.0 - length(u_Center - coord) / u_Radius);
       drop = 0.5 - cos(drop * PI) * 0.5;
       info.r += drop * u_Strength;
       gl_FragColor = info;
     }
     </script>
-    <script type="x-shader/x-fragment" id="waterInfoFragmentStepShader">
-    uniform sampler2D u_Texture;
-    uniform vec2 u_Delta;
-    varying vec2 v_Uv;
+    <script type="x-shader/x-fragment" id="waterSurfaceFragmentStepShader">
+    uniform sampler2D texture;
+    uniform vec2 delta;
+    varying vec2 coord;
     void main() {
-      vec4 info = texture2D(u_Texture, v_Uv);
-      vec2 dx = vec2(u_Delta.x, 0.0);
-      vec2 dy = vec2(0.0, u_Delta.y);
-      float average = (texture2D(u_Texture, v_Uv - dx).r + texture2D(u_Texture, v_Uv - dy).r + texture2D(u_Texture, v_Uv + dx).r + texture2D(u_Texture, v_Uv + dy).r) * 0.25;
+      /* get vertex info */
+      vec4 info = texture2D(texture, coord);
+
+      /* calculate average neighbor height */
+      vec2 dx = vec2(delta.x, 0.0);
+      vec2 dy = vec2(0.0, delta.y);
+      float average = (texture2D(texture, coord - dx).r
+      + texture2D(texture, coord - dy).r
+      + texture2D(texture, coord + dx).r
+      + texture2D(texture, coord + dy).r) * 0.25;
+
+      /* change the velocity to move toward the average */
       info.g += (average - info.r) * 2.0;
+
+      /* attenuate the velocity a little so waves do not last forever */
       info.g *= 0.995;
+
+      /* move the vertex along the velocity */
       info.r += info.g;
       gl_FragColor = info;
     }
     </script>
-    <script type="x-shader/x-fragment" id="waterInfoFragmentNormalShader">
-    uniform sampler2D u_Texture;
-    uniform vec2 u_Delta;
-    varying vec2 v_Uv;
+    <script type="x-shader/x-fragment" id="waterSurfaceFragmentNormalShader">
+    uniform sampler2D texture;
+    uniform vec2 delta;
+    varying vec2 coord;
     void main() {
-      vec4 info = texture2D(u_Texture, v_Uv);
-      vec3 dx = vec3(u_Delta.x, texture2D(u_Texture, vec2(v_Uv.x + u_Delta.x, v_Uv.y)).r - info.r, 0.0);
-      vec3 dy = vec3(0.0, texture2D(u_Texture, vec2(v_Uv.x, v_Uv.y + u_Delta.y)).r - info.r, u_Delta.y);
+      /* get vertex info */
+      vec4 info = texture2D(texture, coord);
+      vec3 dx = vec3(delta.x, texture2D(texture, vec2(coord.x + delta.x, coord.y)).r - info.r, 0.0);
+      vec3 dy = vec3(0.0, texture2D(texture, vec2(coord.x, coord.y + delta.y)).r - info.r, delta.y);
       info.ba = normalize(cross(dy, dx)).xz;
       gl_FragColor = info;
     }
@@ -224,7 +239,7 @@
     const float WATER_WIDTH =  128.0 ;
     //
     uniform vec3 u_LightDir;
-    uniform sampler2D u_WaterInfoTexture;
+    uniform sampler2D water;
     uniform float u_PoolHeight;
     //
     varying vec3 v_OldPos;
@@ -243,7 +258,7 @@
     }
     //
     void main() {
-      vec4 info = texture2D(u_WaterInfoTexture, uv);
+      vec4 info = texture2D(water, uv);
       vec3 waveNormal = vec3(info.b, sqrt(1.0 - dot(info.ba, info.ba)), info.a);
       //
       vec3 refractLight0 = refract(u_LightDir, vec3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
@@ -310,7 +325,7 @@
 
     };
 
-    function WaterInfo(params){
+    function waterSurface(params){
 
       this.renderer = params.renderer;
 
@@ -356,23 +371,23 @@
       var dropShader = {
         uniforms: {
 
-          'u_Texture': {type: 't', value: null},
+          'texture': {type: 't', value: null},
           'u_Center': {type: 'v2', value: new THREE.Vector2(0, 0)},
           'u_Radius': {type: 'f', value: 0.0},
           'u_Strength': {type: 'f', value: 0.0}
         },
-        vertexShader: document.getElementById('waterInfoVertexShader').textContent,
-        fragmentShader: document.getElementById('waterInfoFragmentDropShader').textContent
+        vertexShader: document.getElementById('waterSurfaceVertexShader').textContent,
+        fragmentShader: document.getElementById('waterSurfaceFragmentDropShader').textContent
       };
 
       var stepShader = {
         uniforms: {
-          'u_Texture': {type: 't', value: null},
-          'u_Delta': {type: 'v2', value: this.delta}
+          'texture': {type: 't', value: null},
+          'delta': {type: 'v2', value: this.delta}
         },
 
-        vertexShader: document.getElementById('waterInfoVertexShader').textContent,
-        fragmentShader: document.getElementById('waterInfoFragmentStepShader').textContent
+        vertexShader: document.getElementById('waterSurfaceVertexShader').textContent,
+        fragmentShader: document.getElementById('waterSurfaceFragmentStepShader').textContent
 
       };
 
@@ -380,11 +395,11 @@
 
         uniforms: {
 
-          'u_Texture': {type: 't', value: null},
-          'u_Delta': {type: 'v2', value: this.delta}
+          'texture': {type: 't', value: null},
+          'delta': {type: 'v2', value: this.delta}
         },
-        vertexShader: document.getElementById('waterInfoVertexShader').textContent,
-        fragmentShader: document.getElementById('waterInfoFragmentNormalShader').textContent
+        vertexShader: document.getElementById('waterSurfaceVertexShader').textContent,
+        fragmentShader: document.getElementById('waterSurfaceFragmentNormalShader').textContent
 
       };
 
@@ -394,15 +409,15 @@
 
     }
 
-    WaterInfo.prototype.render1 = function(){ // render once
+    waterSurface.prototype.seqRender = function(){ // render once
 
       this.swapTargets();
 
-      this.pStep.render(this.renderer, this.camera, this.targetIn, this.targetOut, 'u_Texture');
+      this.pStep.render(this.renderer, this.camera, this.targetIn, this.targetOut, 'texture');
 
       this.swapTargets();
 
-      this.pNormal.render(this.renderer, this.camera, this.targetIn, this.targetOut, 'u_Texture');
+      this.pNormal.render(this.renderer, this.camera, this.targetIn, this.targetOut, 'texture');
 
       if (this.debug === true){
 
@@ -416,7 +431,7 @@
 
     };
 
-    WaterInfo.prototype.swapTargets = function(){
+    waterSurface.prototype.swapTargets = function(){
 
       var t = this.targetIn;
       this.targetIn = this.targetOut;
@@ -424,13 +439,13 @@
 
     };
 
-    WaterInfo.prototype.addDrop = function(dropCenter, dropRadius, dropStrength){
+    waterSurface.prototype.addDrop = function(dropCenter, dropRadius, dropStrength){
 
       this.pDrop.updateUniform('u_Center', dropCenter);
       this.pDrop.updateUniform('u_Radius', dropRadius);
       this.pDrop.updateUniform('u_Strength', dropStrength);
 
-      this.pDrop.render(this.renderer, this.camera, this.targetIn, this.targetOut, 'u_Texture');
+      this.pDrop.render(this.renderer, this.camera, this.targetIn, this.targetOut, 'texture');
 
       this.swapTargets();
 
@@ -484,7 +499,7 @@
         uniforms: {
           'u_LightDir': {type: 'v3', value: null},
           'u_CausticTex': {type: 't', value: null},
-          'u_WaterInfoTexture': {type: 't', value: null},
+          'water': {type: 't', value: null},
           'u_PoolHeight': {type: 'f', value: 0.0}
         },
         vertexShader: document.getElementById('causticsInfoVertexShader').textContent,
@@ -497,9 +512,9 @@
 
     }
 
-    CausticsInfo.prototype.render1 = function(waterInfoTexture){ // render once
+    CausticsInfo.prototype.seqRender = function(waterSurfaceTexture){ // render once
 
-      this.pCaustics.updateUniform('u_WaterInfoTexture', waterInfoTexture);
+      this.pCaustics.updateUniform('water', waterSurfaceTexture);
 
       this.pCaustics.regularRender(this.renderer, this.camera, this.targetOut);
 
@@ -526,10 +541,10 @@
         var canvasWidth = 800;
         var canvasHeight = 450;
 
-        var waterInfoWidth = waterWidth; // defined in shaders.js
-        var waterInfoHeight = waterInfoWidth;
+        var waterSurfaceWidth = waterWidth; // defined in shaders.js
+        var waterSurfaceHeight = waterSurfaceWidth;
 
-        var causticsInfoWidth = 4 * waterInfoWidth;
+        var causticsInfoWidth = 4 * waterSurfaceWidth;
         var causticsInfoHeight = causticsInfoWidth;
 
         var waterHeight = waterWidth;
@@ -545,7 +560,7 @@
 			  var mouse;
 
         var waterMaterials;
-        var waterInfo;
+        var waterSurface;
 
         var waterShaders = {};
         var causticsShader = {};
@@ -583,12 +598,12 @@
             controls.dampingFactor = 0.25;
             controls.enableZoom = true;
 
-            // waterInfo texture
-            waterInfo = new WaterInfo({
+            // waterSurface texture
+            waterSurface = new waterSurface({
 
               renderer: renderer,
-              w: waterInfoWidth,
-              h: waterInfoHeight,
+              w: waterSurfaceWidth,
+              h: waterSurfaceHeight,
               debug: false
 
             });
@@ -604,7 +619,7 @@
             });
 
 
-            if (waterInfo.debug === true || causticsInfo.debug === true){
+            if (waterSurface.debug === true || causticsInfo.debug === true){
 
               renderer.setSize(waterWidth * 2, waterWidth * 2);
 
@@ -633,7 +648,7 @@
               uniforms:{
                 'u_TileTexture': {type: 't', value: tileTexture},
                 'u_SkyTexture': {type: 't', value: skyTexture},
-                'u_WaterInfoTexture': {type: 't', value: null},
+                'water': {type: 't', value: null},
                 'u_CausticTex': {type: 't', value: null},
                 'u_LightDir': {type: 't', value: null},
                 'u_PoolHeight': {type: 't', value: null}
@@ -657,7 +672,7 @@
             //water cube
             // this.cubeMaterial = new THREE.ShaderMaterial({
             //     'u_TileTexture': {type: 't', value: tileTexture},
-            //     'u_WaterInfoTexture': {type: 't', value: null},
+            //     'water': {type: 't', value: null},
             //     'u_CausticTex': {type: 't', value: null},
             //     'u_LightDir': {type: 't', value: null},
             //     'u_PoolHeight': {type: 't', value: null}
@@ -773,9 +788,9 @@
           //  console.log('clear');
             renderer.clear();
 
-            // waterInfoTexture
+            // waterSurfaceTexture
 
-            var waterInfoTexture = waterInfo.render1();
+            var waterSurfaceTexture = waterSurface.seqRender();
 
 
             // causticTex
@@ -783,9 +798,9 @@
             causticsInfo.pCaustics.updateUniform('u_LightDir', new THREE.Vector3(Math.sin(x), 0, Math.cos(x)));
             causticsInfo.pCaustics.updateUniform('u_PoolHeight', 60.0);
             //console.log(Math.sin(x) + " "+ Math.cos(x));
-            var causticTex = causticsInfo.render1(waterInfoTexture);
+            var causticTex = causticsInfo.seqRender(waterSurfaceTexture);
 
-            waterMaterials.uniforms['u_WaterInfoTexture'].value = waterInfoTexture;
+            waterMaterials.uniforms['water'].value = waterSurfaceTexture;
             waterMaterials.uniforms['u_CausticTex'].value = causticTex;
             waterMaterials.uniforms['u_LightDir'].value = new THREE.Vector3(Math.sin(x), 0, Math.cos(x));
             waterMaterials.uniforms['u_PoolHeight'].value = 60.0;
@@ -794,7 +809,7 @@
 
         function addDrop(center, radius, strength){
 
-          waterInfo.addDrop(center, radius, strength);
+          waterSurface.addDrop(center, radius, strength);
 
         }
         function addRandomDrops(){
