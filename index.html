@@ -5,12 +5,12 @@
     <meta charset="UTF-8">
     <style>
         body {
-            color: #000;
+            color: #fff;
             font-family: Monospace;
             font-size: 13px;
             text-align: center;
             font-weight: bold;
-            background-color: #fff;
+            background-color: #000;
             margin: 0px;
             overflow: hidden;
         }
@@ -26,9 +26,11 @@
     <script src="js/OpenBoxBufferGeometry.js"></script>
     <script src="libs/stats.min.js"></script>
 
+
+    <!-- NOTE: water shaders by evan wallace -->
     <script type="x-shader/x-vertex" id="waterVertexShader">
     uniform sampler2D water;
-    varying vec3 v_WorldPos;
+    varying vec3 worldPosition;
     varying vec2 coord;
 
     void main() {
@@ -36,7 +38,7 @@
       // switch to xz plane
       vec4 worldPos = modelMatrix * vec4(position + vec3(0.0,info.r, 0.0) , 1.0); //vector4 compatible here
       gl_Position = projectionMatrix * viewMatrix * worldPos;
-      v_WorldPos = worldPos.xyz;
+      worldPosition = worldPos.xyz;
       coord = uv;
       }
     </script>
@@ -55,7 +57,7 @@
     uniform vec3 light;
     uniform float poolHeight;
 
-    varying vec3 v_WorldPos;
+    varying vec3 worldPosition;
     varying vec2 coord;
 
     vec2 getUv(vec2 pos, float maxWidth, float maxHeight){
@@ -82,27 +84,27 @@
     }
 
     vec3 getWallColor(vec3 worldPos, vec3 ray, vec3 lightDir){
-      vec3 color;
-      vec3 faceNormal;
+      vec3 wallColor;
+      vec3 normal;
 
       vec2 t = intersectCube(worldPos, ray, vec3(-WATER_WIDTH / 2.0, -poolHeight, -WATER_WIDTH / 2.0), vec3(WATER_WIDTH / 2.0, 0.0, WATER_WIDTH / 2.0));
       vec3 hit = worldPos + t.y * ray;
 
       if (WATER_WIDTH / 2.0 - abs(hit.x) <= 0.1){
-        color = (texture2D(tiles, getUv(hit.yz, WATER_WIDTH, WATER_WIDTH))).xyz;
-        faceNormal = vec3(1.0, 0.0, 0.0);
+        wallColor = (texture2D(tiles, getUv(hit.yz, WATER_WIDTH, WATER_WIDTH))).xyz;
+        normal = vec3(1.0, 0.0, 0.0);
       } else if(WATER_WIDTH / 2.0 - abs(hit.z) <= 0.1){
-        color = (texture2D(tiles, getUv(hit.xy, WATER_WIDTH, WATER_WIDTH))).xyz;
-        faceNormal = vec3(0.0, 0.0, 1.0);
+        wallColor = (texture2D(tiles, getUv(hit.xy, WATER_WIDTH, WATER_WIDTH))).xyz;
+        normal = vec3(0.0, 0.0, 1.0);
       } else if(hit.y <= -poolHeight + 0.1){
-        color = (texture2D(tiles, getUv(hit.xz, WATER_WIDTH, WATER_WIDTH))).xyz;
-        faceNormal = vec3(0.0, 1.0, 0.0);
+        wallColor = (texture2D(tiles, getUv(hit.xz, WATER_WIDTH, WATER_WIDTH))).xyz;
+        normal = vec3(0.0, 1.0, 0.0);
       } else {
-        color = vec3(1.0);
-        faceNormal = vec3(0.0, 1.0, 0.0);
+        wallColor = vec3(1.0);
+        normal = vec3(0.0, 1.0, 0.0);
       }
 
-      float diffuse = dot(faceNormal, light);
+      float diffuse = dot(normal, light);
       diffuse = 0.3 * ((diffuse >= 0.0)? 1.0 : 0.0) * diffuse + 0.7;
 
       // shadow
@@ -116,8 +118,8 @@
       float caustics = texture2D(causticTex, causticsUv).r;
       float litCaustics = pow(lit.x, 2.0);
 
-      color *= diffuse * WATER_COLOR * (lit * 0.8 + litCaustics * caustics * 0.8);
-      return color;
+      wallColor *= diffuse * WATER_COLOR * (lit * 0.8 + litCaustics * caustics * 0.8);
+      return wallColor;
     }
 
     void main() {
@@ -131,7 +133,7 @@
         info = texture2D(water, myUv);
       }
       //
-      vec3 eyeRay = normalize(v_WorldPos - cameraPosition);
+      vec3 eyeRay = normalize(worldPosition - cameraPosition);
       vec3 worldNormal = vec3(info.b, sqrt(1.0 - dot(info.ba, info.ba)), info.a);
       //
       float fresnel = mix(0.25, 1.0, pow(1.0 + dot(worldNormal, eyeRay), 3.0));
@@ -142,9 +144,9 @@
       vec3 refractLight = refract(light, worldNormal, IOR_AIR / IOR_WATER);
       //
       // refract causticTex + tileTexture
-      vec3 refractColor = getWallColor(v_WorldPos, refractRay, refractLight);
+      vec3 refractColor = getWallColor(worldPosition, refractRay, refractLight);
       // reflect textureCube
-      vec3 reflectColor = (reflectRay.y >= 0.0) ? textureCube(sky, vec3(-reflectRay.x, reflectRay.yz)).rgb : getWallColor(v_WorldPos, reflectRay, refractLight);
+      vec3 reflectColor = (reflectRay.y >= 0.0) ? textureCube(sky, vec3(-reflectRay.x, reflectRay.yz)).rgb : getWallColor(worldPosition, reflectRay, refractLight);
       //
       gl_FragColor = vec4(mix(refractColor, reflectColor, fresnel), 1.0);
     }
@@ -161,17 +163,17 @@
     <script type="x-shader/x-fragment" id="waterSurfaceFragmentDropShader">
     const float PI = 3.141592653589793;
     uniform sampler2D texture;
-    uniform vec2 u_Center;
-    uniform float u_Radius;
-    uniform float u_Strength;
+    uniform vec2 center;
+    uniform float radius;
+    uniform float strength;
     varying vec2 coord;
     void main() {
       /* get vertex info */
       vec4 info = texture2D(texture, coord);
       /* add the drop to the height */
-      float drop = max(0.0, 1.0 - length(u_Center - coord) / u_Radius);
+      float drop = max(0.0, 1.0 - length(center - coord) / radius);
       drop = 0.5 - cos(drop * PI) * 0.5;
-      info.r += drop * u_Strength;
+      info.r += drop * strength;
       gl_FragColor = info;
     }
     </script>
@@ -215,129 +217,39 @@
       gl_FragColor = info;
     }
     </script>
-    <script type="x-shader/x-vertex" id="causticsInfoVertexShader">
-    precision mediump float;
 
-    vec2 intersectCube(vec3 origin, vec3 ray, vec3 cubeMin, vec3 cubeMax) {
-      vec3 t1 = (cubeMin - origin) / ray;
-      vec3 t2 = (cubeMax - origin) / ray;
 
-      vec3 ta = min(t1, t2);
-      vec3 tb = max(t1, t2);
-
-      float tminxy = max(ta.x, ta.y);
-      float tmaxxy = min(tb.x, tb.y);
-
-      float tmin = max(tminxy, ta.z);
-      float tmax = min(tmaxxy, tb.z);
-
-      return vec2(tmin, tmax);
-    }
-
-    const float IOR_AIR = 1.0;
-    const float IOR_WATER = 1.333;
-    const float WATER_WIDTH =  128.0 ;
-    //
-    uniform vec3 light;
-    uniform sampler2D water;
-    uniform float poolHeight;
-    //
-    varying vec3 v_OldPos;
-    varying vec3 v_NewPos;
-    //
-    vec3 getHitPosition(vec3 origin, vec3 ray){
-      vec2 t = intersectCube(origin, ray, vec3(-WATER_WIDTH / 2.0, -poolHeight, -WATER_WIDTH / 2.0), vec3(WATER_WIDTH / 2.0, 0.0, WATER_WIDTH / 2.0));
-      return origin + ray * t.y;
-    }
-    //
-    vec3 project(vec3 pos, vec3 light){
-      vec2 delta = (-poolHeight - pos.y) / light.y * light.xz;
-      pos.xz += delta;
-      pos.y = 0.0;
-      return pos;
-    }
-    //
-    void main() {
-      vec4 info = texture2D(water, uv);
-      vec3 waveNormal = vec3(info.b, sqrt(1.0 - dot(info.ba, info.ba)), info.a);
-      //
-      vec3 refractLight0 = refract(light, vec3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
-      vec3 refractLight1 = refract(light, waveNormal, IOR_AIR / IOR_WATER);
-      //
-      // world coord
-      vec3 worldPos = vec3(position.x, 0.0, position.y);
-      vec3 hit0 = getHitPosition(worldPos, refractLight0);
-      vec3 hit1 = getHitPosition(worldPos + vec3(0.0, info.r, 0.0), refractLight1);
-      //
-      // project to xz plane
-      v_OldPos = project(hit0, refractLight0);
-      v_NewPos = project(hit1, refractLight1);
-
-      gl_Position =  projectionMatrix * modelViewMatrix * vec4((v_NewPos.xz + refractLight0.xz / refractLight0.y), 0.0, 1.0);
-    }
-    </script>
-    <script type="x-shader/x-fragment" id="causticsInfoFragmentShader">
-    precision mediump float;
-
-    uniform vec3 light;
-    uniform float poolHeight;
-
-    varying vec3 v_OldPos;
-    varying vec3 v_NewPos;
-    void main() {
-      float oldArea = length(dFdx(v_OldPos)) * length(dFdy(v_OldPos));
-      float newArea = length(dFdx(v_NewPos)) * length(dFdy(v_NewPos));
-      // make sure that only lit areas in the texture > 0.0
-      float r = clamp((oldArea - newArea) / oldArea, 0.0, 1.0);
-      gl_FragColor = vec4(r, 0.0, 0.0, 1.0);
-    }
-    </script>
 
     <script type="text/javascript">
 
+    //
     function ShaderPass(shader, w, h){
 
       this.bufferScene = new THREE.Scene();
-
       this.bufferMaterial = new THREE.ShaderMaterial(shader);
-
-      this.bufferScene.add(new THREE.Mesh( new THREE.PlaneGeometry( w, h, w, h), this.bufferMaterial )); // causticsShader needs vertex positions(segments)
+      this.bufferScene.add(new THREE.Mesh( new THREE.PlaneGeometry( w, h, w, h), this.bufferMaterial ));
 
     }
 
     ShaderPass.prototype.render = function(renderer, camera, tIn, tOut, texUniformName){
-
       this.updateUniform(texUniformName, tIn.texture);
-
       renderer.render(this.bufferScene, camera, tOut, true);
-
     };
 
     ShaderPass.prototype.regularRender = function(renderer, camera, tOut){
-
       renderer.render(this.bufferScene, camera, tOut, true);
-
     };
 
     ShaderPass.prototype.updateUniform = function(name, value){
-
       this.bufferMaterial.uniforms[name].value = value;
-
     };
 
     function waterSurface(params){
-
       this.renderer = params.renderer;
-
-      // texture dimension
-
       var w = params.w;
       var h = params.h;
 
-      this.debug = params.debug;
-
       var targetOptions = {
-
         minFilter: THREE.LinearFilter,
         magFilter: THREE.LinearFilter,
         type: THREE.FloatType,
@@ -349,32 +261,16 @@
       this.targetIn = new THREE.WebGLRenderTarget( w, h, targetOptions);
       this.targetOut = new THREE.WebGLRenderTarget( w, h, targetOptions);
 
-      // debug, display the texture
-
-      if (this.debug === true){
-
-        this.scene = new THREE.Scene();
-
-        this.finalMaterial =  new THREE.MeshBasicMaterial({map: null});
-
-        this.quad = new THREE.Mesh( new THREE.PlaneBufferGeometry( w, h, 1, 1), this.finalMaterial );
-
-        this.scene.add(this.quad);
-
-      }
       this.camera = new THREE.OrthographicCamera( w / - 2, w / 2, h / 2, h / - 2, 0, 1 );
       this.delta = new THREE.Vector2(1 / w, 1 / h);
-
-
-      // buffer scene
 
       var dropShader = {
         uniforms: {
 
           'texture': {type: 't', value: null},
-          'u_Center': {type: 'v2', value: new THREE.Vector2(0, 0)},
-          'u_Radius': {type: 'f', value: 0.0},
-          'u_Strength': {type: 'f', value: 0.0}
+          'center': {type: 'v2', value: new THREE.Vector2(0, 0)},
+          'radius': {type: 'f', value: 0.0},
+          'strength': {type: 'f', value: 0.0}
         },
         vertexShader: document.getElementById('waterSurfaceVertexShader').textContent,
         fragmentShader: document.getElementById('waterSurfaceFragmentDropShader').textContent
@@ -412,21 +308,9 @@
     waterSurface.prototype.seqRender = function(){ // render once
 
       this.swapTargets();
-
       this.pStep.render(this.renderer, this.camera, this.targetIn, this.targetOut, 'texture');
-
       this.swapTargets();
-
       this.pNormal.render(this.renderer, this.camera, this.targetIn, this.targetOut, 'texture');
-
-      if (this.debug === true){
-
-        this.quad.material.map = this.targetOut.texture;
-        this.renderer.render( this.scene, this.camera );
-
-      }
-
-      // output the texture ...
       return this.targetOut.texture;
 
     };
@@ -441,12 +325,11 @@
 
     waterSurface.prototype.addDrop = function(dropCenter, dropRadius, dropStrength){
 
-      this.pDrop.updateUniform('u_Center', dropCenter);
-      this.pDrop.updateUniform('u_Radius', dropRadius);
-      this.pDrop.updateUniform('u_Strength', dropStrength);
+      this.pDrop.updateUniform('center', dropCenter);
+      this.pDrop.updateUniform('radius', dropRadius);
+      this.pDrop.updateUniform('strength', dropStrength);
 
       this.pDrop.render(this.renderer, this.camera, this.targetIn, this.targetOut, 'texture');
-
       this.swapTargets();
 
     };
@@ -458,20 +341,21 @@
         if (!Detector.webgl) Detector.addGetWebGLMessage();
 
         var waterWidth = 128;
-        var canvasWidth = 800;
-        var canvasHeight = 450;
+        var canvasWidth = 1280;
+        var canvasHeight = 720;
 
         var waterSurfaceWidth = waterWidth; // defined in shaders.js
         var waterSurfaceHeight = waterSurfaceWidth;
 
         var waterHeight = waterWidth;
-        var poolHeight = 60;
+        var poolHeight = 60.0;
 
         var boxSize = 100;
         var stats;
         var camera, controls, scene, renderer;
         var waterMeshes;
         var raycastHelper;
+        var light;
         var raycaster;
         var raycasterOffsetY;
 			  var mouse;
@@ -488,8 +372,10 @@
 
         function init() {
 
+          scene = new THREE.Scene();
+          scene.matrixAutoUpdate = false;
 
-            renderer = new THREE.WebGLRenderer();
+          renderer = new THREE.WebGLRenderer();
 
             renderer.setClearColor( 0x000000, 1);
             renderer.setSize(canvasWidth, canvasHeight);
@@ -499,14 +385,9 @@
             var container = document.getElementById('container');
             container.appendChild(renderer.domElement);
 
-
-            scene = new THREE.Scene();
-            scene.matrixAutoUpdate = false;
-
-
             camera = new THREE.PerspectiveCamera( 45, canvasWidth / canvasHeight, 1, 100000 );
 
-            camera.position.z = 280;
+            camera.position.x = Math.PI /2;
             camera.position.y = 100;
 
             controls = new THREE.OrbitControls(camera, renderer.domElement);
@@ -516,33 +397,10 @@
 
             // waterSurface texture
             waterSurface = new waterSurface({
-
               renderer: renderer,
               w: waterSurfaceWidth,
-              h: waterSurfaceHeight,
-              debug: false
-
+              h: waterSurfaceHeight
             });
-
-
-            if (waterSurface.debug === true ){
-
-              renderer.setSize(waterWidth * 2, waterWidth * 2);
-
-            }
-
-            // skyTexture
-            var path = "img/skybox/";
-            var format = '.jpg';
-            var urls = [
-
-                path + 'posx' + format, path + 'negx' + format,
-                path + 'posy' + format, path + 'negy' + format,
-                path + 'posz' + format, path + 'negz' + format
-
-            ];
-            var skyTexture = new THREE.CubeTextureLoader().load( urls );
-            skyTexture.format = THREE.RGBFormat;
 
             // tileTexture
             var tileTexture = new THREE.TextureLoader().load('img/tile.jpg');
@@ -553,7 +411,7 @@
             var waterShaders = {
               uniforms:{
                 'tiles': {type: 't', value: tileTexture},
-                'sky': {type: 't', value: skyTexture},
+                'sky': {type: 't', value: null},
                 'water': {type: 't', value: null},
                 'causticTex': {type: 't', value: null},
                 'light': {type: 't', value: null},
@@ -573,35 +431,33 @@
             waterMeshes.rotation.x = 3 / 2 * Math.PI; // front to top, back to bottom
             scene.add(waterMeshes);
 
+            //cube
+            var geometry = new THREE.BoxGeometry( waterWidth, poolHeight, waterHeight);
+            var material = new THREE.MeshBasicMaterial( {color: 0x010101} );
+            var cube = new THREE.Mesh( geometry, material );
+            scene.add( cube );
+
+            cube.position.y = -poolHeight/2-1;
+
+
             // raycaster
             raycaster = new THREE.Raycaster();
             mouse = new THREE.Vector2();
             container.addEventListener('click', onMouseClick, false);
 
 
-            // raycast helper
-
-            var geometry = new THREE.CylinderGeometry( 0, 4, 6, 3 );
-
-            raycasterOffsetY = 4;
-
-            raycastHelper = new THREE.Mesh( geometry, new THREE.MeshNormalMaterial());
-
-            raycastHelper.position.y += raycasterOffsetY;
-
-            scene.add( raycastHelper );
-
-            raycastHelper.visible = true;
-
-
-            // init drops
-
-            this.addRandomDrops();
-
             //stats
+
             stats = new Stats();
             container.appendChild(stats.dom);
 
+            // raycast helper
+            var geometry = new THREE.CylinderGeometry( 0, 4, 6, 3 );
+            raycasterOffsetY = 4;
+            raycastHelper = new THREE.Mesh( geometry, new THREE.MeshNormalMaterial());
+            raycastHelper.position.y += raycasterOffsetY;
+            scene.add( raycastHelper );
+            raycastHelper.visible = true;
 
         }
 
@@ -646,6 +502,7 @@
         function animate() {
             requestAnimationFrame(animate);
             waterUpdate();
+            stats.update();
             controls.update();
             render();
         }
@@ -658,41 +515,19 @@
         function waterUpdate(){
 
             renderer.clear();
-
             // waterSurfaceTexture
             var waterSurfaceTexture = waterSurface.seqRender();
 
-            x+= 0.01
-
+            waterMaterials.uniforms['poolHeight'].value = poolHeight;
             waterMaterials.uniforms['water'].value = waterSurfaceTexture;
-            waterMaterials.uniforms['light'].value = new THREE.Vector3(Math.sin(x), 0, Math.cos(x)); //circle light around
-            waterMaterials.uniforms['poolHeight'].value = 60.0;
+
+            waterMaterials.uniforms['light'].value = new THREE.Vector3(5,5,5) //circle light around
 
         }
 
         function addDrop(center, radius, strength){
-
           waterSurface.addDrop(center, radius, strength);
-
         }
-        function addRandomDrops(){
-
-          for (var i = 0; i < 10; i++) {
-
-            // params: center, radius in uv coord, strength [0, 1]
-
-            addDrop(new THREE.Vector2(getRandomArbitrary(0.0, 0.5), getRandomArbitrary(0.0, 0.5)), 0.1, (i & 1) ? - 0.1 : 0.1);
-
-          }
-        }
-
-        function getRandomArbitrary(min, max) {
-
-          return Math.random() * (max - min) + min;
-
-        }
-
-
     </script>
 </body>
 
